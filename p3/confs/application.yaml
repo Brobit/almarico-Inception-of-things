@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://github.com/Brobit/almarico-Inception-of-things   # public, login in the name
     targetRevision: HEAD
-    path: manifests
+    path: p3/confs/manifests
   destination:
     server: https://kubernetes.default.svc
     namespace: dev

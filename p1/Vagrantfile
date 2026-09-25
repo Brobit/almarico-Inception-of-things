@@ -39,7 +39,9 @@ Vagrant.configure("2") do |config|
             machine.vm.provider "virtualbox" do |vb|
                 vb.name             = node[:name]
                 vb.cpus             = 1
-                vb.memory           =1024
+                vb.memory           = 1024
+                # DNS goes through the host: keeps working if the host changes network
+                vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
             end
             
             machine.vm.provision "shell", path: node[:script], env: {

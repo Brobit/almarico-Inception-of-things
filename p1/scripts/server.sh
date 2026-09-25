@@ -9,4 +9,4 @@ curl -sfL https://get.k3s.io | K3S_TOKEN="$K3S_TOKEN" sh -s - server \
     --flannel-iface "$IFACE" \
     --write-kubeconfig-mode 644
     
-echo "alias k=kubectl" >> /home/vagrant/.bashrc
+grep -q "alias k=kubectl" /home/vagrant/.bashrc || echo "alias k=kubectl" >> /home/vagrant/.bashrc
