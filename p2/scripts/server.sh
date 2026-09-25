@@ -10,12 +10,19 @@ curl -sfL https://get.k3s.io | sh -s - server \
     --write-kubeconfig-mode 644
 
 # The node takes a few seconds to register: wait for it to exist, then to be Ready
-until kubectl get node "$(hostname)" >/dev/null 2>&1; do
+until kubectl get nodes -o name 2>/dev/null | grep -q .; do
     echo "waiting for the node to register..."; sleep 3
 done
 kubectl wait --for=condition=Ready node --all --timeout=180s
 
 # -R: a re-provision copies confs/ inside the existing /tmp/confs, apply handles both
 kubectl apply -R -f /tmp/confs/
+
+# Traefik (the Ingress controller) is installed by a K3s Helm job a bit later: wait for it
+until kubectl -n kube-system get deploy traefik >/dev/null 2>&1; do
+    echo "waiting for Traefik to be installed..."; sleep 3
+done
+kubectl -n kube-system rollout status deploy/traefik --timeout=300s
+kubectl wait --for=condition=Available deploy --all --timeout=180s
 
 grep -q "alias k=kubectl" /home/vagrant/.bashrc || echo "alias k=kubectl" >> /home/vagrant/.bashrc
