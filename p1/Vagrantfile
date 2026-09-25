@@ -1,0 +1,52 @@
+# -*- mode: ruby -*-
+require "rbconfig"
+require "securerandom"
+require "fileutils"
+
+LOGIN       = "almarico"
+SERVER_IP   = "192.168.56.110"
+WORKER_IP   = "192.168.56.111"
+
+# --- Plateform detection ---
+HOST_CPU    = RbConfig::CONFIG["host_cpu"]
+IS_ARM      = HOST_CPU.match?(/arm64|aarch64/)
+
+BOX         = ENV.fetch("IOT_BOX", "bento/debian-13")
+BOX_ARCH    = IS_ARM ? "arm64" : "amd64"
+
+# --- Shared K3s token ---
+TOKEN_FILE  = File.join(__dir__, ".vagrant", "k3s-token")
+FileUtils.mkdir_p(File.dirname(TOKEN_FILE))
+File.write(TOKEN_FILE, SecureRandom.hex(32)) unless File.exist?(TOKEN_FILE)
+K3S_TOKEN = File.read(TOKEN_FILE).strip
+
+NODES = [
+    { name: "#{LOGIN}S", ip: SERVER_IP, script: "scripts/server.sh"},
+    { name: "#{LOGIN}SW", ip: WORKER_IP, script: "scripts/worker.sh"},
+]
+
+Vagrant.configure("2") do |config|
+    config.vm.box                   = BOX
+    config.vm.box_architecture      = BOX_ARCH
+    config.vm.box_check_update      = false
+    config.vm.synced_folder ".", "/vagrant", disabled: true
+    
+    NODES.each do |node|
+        config.vm.define node[:name] do |machine|
+            machine.vm.hostname     = node[:name]
+            machine.vm.network "private_network", ip: node[:ip]
+            
+            machine.vm.provider "virtualbox" do |vb|
+                vb.name             = node[:name]
+                vb.cpus             = 1
+                vb.memory           =1024
+            end
+            
+            machine.vm.provision "shell", path: node[:script], env: {
+                "K3S_TOKEN" => K3S_TOKEN,
+                "NODE_IP"   => node[:ip],
+                "SERVER_IP" => SERVER_IP,
+            }
+        end
+    end
+end

@@ -4,13 +4,13 @@ Sep 22, 2026 · @Someone
 
 ## Strategy: one repo, two architectures
 
-The same repo runs on your Mac M4 Pro (ARM64) and on the school computers (x86-64). The Vagrantfiles and scripts detect the OS and CPU and pick the matching provider, box and binaries, so you never edit code when you switch machines.
+The same repo runs on your Mac M4 Pro (ARM64) and on the school computers (x86-64). The Vagrantfiles and scripts detect the OS and CPU and pick the matching box and binaries, so you never edit code when you switch machines.
 
 ```mermaid
 flowchart TD
     R["Same git repo"] --> V["Vagrantfile (P1, P2)<br/>detects OS + CPU"]
     R --> S["install scripts (P3, bonus)<br/>detect CPU"]
-    V --> M["macOS arm64<br/>VMware Fusion + arm64 box"]
+    V --> M["macOS arm64<br/>VirtualBox + arm64 box"]
     V --> L["Linux x86-64<br/>VirtualBox + amd64 box"]
     S --> A["aarch64: arm64 binaries<br/>+ amd64 emulation"]
     S --> X["x86_64: amd64 binaries"]
@@ -25,12 +25,14 @@ The rule of thumb for the whole project:
 
 ## Step 0: Decide where each part runs
 
-Use your Mac for development and the school PC for the defense. Nested virtualization (a VM inside a VM) is solid on x86, but on Apple Silicon it needs an M3 or newer, macOS 15 or newer and UTM's Apple Virtualization backend ([source](https://docs.meltcloud.io/tasks/hypervisors/macos)). Even then, nested KVM is still unreliable on M4 ([Lima issue](https://github.com/lima-vm/lima/issues/4498)). So on the Mac you skip that layer for Parts 1 and 2.
+Use your Mac for development and the school PC for the defense. Nested virtualization (a VM inside a VM) is solid on x86, but VirtualBox on Apple Silicon doesn't support it at all. Other Mac hypervisors only offer it on an M3 or newer with macOS 15 or newer ([source](https://docs.meltcloud.io/tasks/hypervisors/macos)), and even then nested KVM is unreliable on M4 ([Lima issue](https://github.com/lima-vm/lima/issues/4498)). So on the Mac you skip that layer for Parts 1 and 2.
+
+VirtualBox is the only hypervisor in this guide: on the Mac (7.1 or newer, the first versions that support Apple Silicon hosts) and at school. Keeping one tool means one provider in the Vagrantfiles and one set of commands to explain at the defense.
 
 |  | Mac M4 Pro (development) | School PC (development + defense) |
 | --- | --- | --- |
-| P1, P2 (Vagrant) | Vagrant directly on macOS, provider **VMware Fusion** (free for personal use) or VirtualBox 7.1+ | Inside the host VM: Vagrant + **VirtualBox** |
-| P3, bonus (Docker, k3d) | Inside a [UTM](https://mac.getutm.app) VM: Debian 13 **arm64** (no nesting needed) | Inside the same host VM |
+| P1, P2 (Vagrant) | Vagrant directly on macOS, provider **VirtualBox 7.1+** | Inside the host VM: Vagrant + **VirtualBox** |
+| P3, bonus (Docker, k3d) | Inside a VirtualBox VM: Debian 13 **arm64** (no nesting needed) | Inside the same host VM |
 | Vagrant box | arm64 | amd64 |
 | Host VM size | 4 CPUs · 8 GB RAM · 40 GB disk (12 GB RAM or more for the bonus) | same |
 
@@ -38,9 +40,9 @@ The subject says the whole project must run in a VM, so the Mac setup is only fo
 
 **On the Mac**
 
-1. Install Vagrant: `brew install --cask vagrant` (arm64 build, 2.4+).
-2. Install VMware Fusion (download from Broadcom), then `brew install --cask vagrant-vmware-utility` and `vagrant plugin install vagrant-vmware-desktop`. Or install VirtualBox 7.1+ instead.
-3. In UTM, create a Debian 13 arm64 VM for Part 3 and the bonus. Pick "Virtualize", not "Emulate".
+1. Install VirtualBox 7.1 or newer (`brew install --cask virtualbox`, or the macOS/Apple Silicon package from virtualbox.org). Check with `VBoxManage --version`.
+2. Install Vagrant: `brew install --cask vagrant` (arm64 build, 2.4.9 or newer, which is needed for VirtualBox 7.2). Check with `vagrant --version`. If Homebrew says it's installed but the command is missing, run `brew reinstall --cask vagrant`.
+3. In VirtualBox, create a Debian 13 **arm64** VM for Part 3 and the bonus (use the `debian-13.x.x-arm64-netinst.iso` image). An amd64 ISO won't boot on Apple Silicon.
 
 **At school**
 
@@ -93,7 +95,7 @@ IS_MAC   = HOST_OS.include?("darwin")
 IS_ARM   = HOST_CPU.match?(/arm64|aarch64/)
 ```
 
-**Host setup script, `p1/scripts/setup_host.sh`.** Run it once on each machine. It installs Vagrant and a provider that fits the platform:
+**Host setup script, `p1/scripts/setup_host.sh`.** Run it once on each machine. It installs Vagrant and VirtualBox the way each platform expects:
 
 ```bash
 #!/usr/bin/env bash
@@ -103,9 +105,9 @@ detect_platform
 
 if [ "$OS" = darwin ]; then
   command -v brew >/dev/null || { echo "Install Homebrew first"; exit 1; }
-  brew install --cask vagrant vagrant-vmware-utility
-  vagrant plugin install vagrant-vmware-desktop
-  echo "==> Install VMware Fusion yourself (Broadcom download), then run: vagrant up"
+  brew install --cask vagrant
+  command -v VBoxManage >/dev/null || brew install --cask virtualbox
+  echo "==> Done. Run: vagrant up"
   exit 0
 fi
 
@@ -140,7 +142,7 @@ The script picks the newest VirtualBox package in Oracle's repo, so it keeps wor
 
 ## Part 1: K3s and Vagrant
 
-One Vagrantfile creates two VMs, `<login>S` (K3s server) and `<login>SW` (K3s agent), and picks the box architecture and provider from the machine it runs on. Replace `yourlogin` with a real login from your team.
+One Vagrantfile creates two VMs, `<login>S` (K3s server) and `<login>SW` (K3s agent), and picks the box architecture from the machine it runs on. The provider is always VirtualBox, which is also Vagrant's default, so the file doesn't need to choose one. Replace `yourlogin` with a real login from your team.
 
 **`p1/Vagrantfile`**
 
@@ -155,15 +157,11 @@ SERVER_IP = "192.168.56.110"
 WORKER_IP = "192.168.56.111"
 
 # --- Platform detection -------------------------------------------
-HOST_OS  = RbConfig::CONFIG["host_os"]
 HOST_CPU = RbConfig::CONFIG["host_cpu"]
-IS_MAC   = HOST_OS.include?("darwin")
 IS_ARM   = HOST_CPU.match?(/arm64|aarch64/)
 
-BOX      = ENV.fetch("IOT_BOX", "bento/debian-13")
+BOX      = ENV.fetch("IOT_BOX", "bento/debian-13")   # has virtualbox arm64 + amd64 builds
 BOX_ARCH = IS_ARM ? "arm64" : "amd64"
-PROVIDER = ENV.fetch("IOT_PROVIDER", IS_MAC ? "vmware_desktop" : "virtualbox")
-ENV["VAGRANT_DEFAULT_PROVIDER"] = PROVIDER
 
 # --- Shared K3s token: generated once, never committed ------------
 TOKEN_FILE = File.join(__dir__, ".vagrant", "k3s-token")
@@ -191,12 +189,6 @@ Vagrant.configure("2") do |config|
         vb.name   = node[:name]
         vb.cpus   = 1
         vb.memory = 1024
-      end
-      m.vm.provider "vmware_desktop" do |vw|
-        vw.gui = false
-        vw.vmx["displayName"] = node[:name]
-        vw.vmx["numvcpus"]    = "1"
-        vw.vmx["memsize"]     = "1024"
       end
 
       m.vm.provision "shell", path: node[:script], env: {
@@ -257,7 +249,7 @@ vagrant ssh yourloginS -c "kubectl get nodes -o wide"
 vagrant ssh yourloginSW -c "ip -br a"
 ```
 
-Success looks like 2 nodes, both `Ready`, INTERNAL-IP `.110` and `.111`, and the worker showing its IP on `eth1`. If the interface has another name (like `enp0s8`), the box uses predictable names: try `IOT_BOX` with another Debian box, or add `net.ifnames=0` to the kernel command line in a provisioning step, since the subject asks for `eth1`.
+Success looks like 2 nodes, both `Ready`, INTERNAL-IP `.110` and `.111`, and the worker showing its IP on `eth1`. Check the interface name on **both** machines (Mac and school): VirtualBox on ARM gives the VM virtio network cards, so the same box can name its interfaces differently on arm64 and amd64. If the interface has another name (like `enp0s8`), the box uses predictable names: try `IOT_BOX` with another Debian box, or add `net.ifnames=0` to the kernel command line in a provisioning step, since the subject asks for `eth1`.
 
 Useful commands: `vagrant status`, `vagrant halt`, `vagrant destroy -f`, `vagrant provision`.
 
@@ -265,10 +257,10 @@ Useful commands: `vagrant status`, `vagrant halt`, `vagrant destroy -f`, `vagran
 
 One VM (`<login>S`, `192.168.56.110`) runs K3s in server mode, and Traefik (built into K3s) routes requests by `Host` header to app1, app2 (3 replicas) or app3 as the default. All three apps use `nginx:alpine`, which is published for both amd64 and arm64, so no arch logic is needed.
 
-**`p2/Vagrantfile`** reuses the Part 1 header (detection, `BOX`, `PROVIDER`) with a single machine:
+**`p2/Vagrantfile`** reuses the Part 1 header (detection, `BOX`, `BOX_ARCH`) with a single machine:
 
 ```ruby
-# ...same header as p1 (require, LOGIN, detection, BOX, PROVIDER)...
+# ...same header as p1 (require, LOGIN, detection, BOX, BOX_ARCH)...
 SERVER_IP = "192.168.56.110"
 
 Vagrant.configure("2") do |config|
@@ -281,11 +273,6 @@ Vagrant.configure("2") do |config|
     m.vm.network "private_network", ip: SERVER_IP
     m.vm.provider "virtualbox" do |vb|
       vb.name = "#{LOGIN}S"; vb.cpus = 1; vb.memory = 2048
-    end
-    m.vm.provider "vmware_desktop" do |vw|
-      vw.gui = false
-      vw.vmx["displayName"] = "#{LOGIN}S"
-      vw.vmx["numvcpus"] = "1"; vw.vmx["memsize"] = "2048"
     end
     m.vm.provision "file",  source: "confs", destination: "/tmp/confs"
     m.vm.provision "shell", path: "scripts/server.sh", env: { "NODE_IP" => SERVER_IP }
@@ -401,7 +388,7 @@ For a browser, add `192.168.56.110 app1.com app2.com` to `/etc/hosts`. Be ready 
 
 ## Part 3: K3d and Argo CD
 
-No Vagrant here: inside the host VM (UTM on the Mac, VirtualBox at school), one script installs the tools and a second one builds the cluster and Argo CD. Argo CD then deploys whatever your GitHub repo says, and changing `v1` to `v2` there updates the running app.
+No Vagrant here: inside the host VM (a Debian 13 arm64 VirtualBox VM on the Mac, the amd64 host VM at school), one script installs the tools and a second one builds the cluster and Argo CD. Argo CD then deploys whatever your GitHub repo says, and changing `v1` to `v2` there updates the running app.
 
 **The ARM catch:** `wil42/playground` is published for **amd64 only** (both `v1` and `v2`, per its [Docker Hub tags](https://hub.docker.com/r/wil42/playground/tags)). On your Mac VM it fails with `exec format error` unless you do one of these:
 
@@ -672,6 +659,7 @@ Run the whole project from a fresh clone on a school PC at least once before the
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Vagrant says the VirtualBox version is unsupported | Vagrant is older than VirtualBox | Update Vagrant (2.4.9 or newer for VirtualBox 7.2) |
 | `vagrant up` can't find the box | No box for this arch + provider | `IOT_BOX=<other box> vagrant up`; search the Vagrant registry filtered by provider and arm64/amd64 |
 | VirtualBox says VT-x is unavailable | Nested VT-x off in the host VM | Power off the host VM, tick Enable Nested VT-x/AMD-V |
 | Only 1 node, or wrong INTERNAL-IP | K3s picked the NAT interface | Check `--node-ip` and `--flannel-iface` in the scripts |
