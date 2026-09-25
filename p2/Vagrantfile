@@ -1,0 +1,35 @@
+# -*- mode: ruby -*-
+require "rbconfig"
+
+LOGIN       = "almarico"
+SERVER_IP   = "192.168.56.110"
+
+# --- Platform detection ---
+HOST_CPU    = RbConfig::CONFIG["host_cpu"]
+IS_ARM      = HOST_CPU.match?(/arm64|aarch64/)
+
+BOX         = ENV.fetch("IOT_BOX", "bento/debian-13")
+BOX_ARCH    = IS_ARM ? "arm64" : "amd64"
+
+Vagrant.configure("2") do |config|
+    config.vm.box                   = BOX
+    config.vm.box_architecture      = BOX_ARCH
+    config.vm.box_check_update      = false
+    config.vm.synced_folder ".", "/vagrant", disabled: true
+
+    config.vm.define "#{LOGIN}S" do |machine|
+        machine.vm.hostname         = "#{LOGIN}S"
+        machine.vm.network "private_network", ip: SERVER_IP
+
+        machine.vm.provider "virtualbox" do |vb|
+            vb.name                 = "#{LOGIN}S"
+            vb.cpus                 = 1
+            vb.memory               = 2048
+        end
+
+        machine.vm.provision "file", source: "confs", destination: "/tmp/confs"
+        machine.vm.provision "shell", path: "scripts/server.sh", env: {
+            "NODE_IP" => SERVER_IP,
+        }
+    end
+end
